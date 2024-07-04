@@ -1,9 +1,1193 @@
 --- 
-title: "YOUR TITLE HERE"
-author: "YOUR NAME HERE"
+title: "2024 Men's March Madness NCAA Basketball Tournament Matchup Predictions"
+author: "Tyler Farr"
 date: "`r Sys.Date()`"
 site: bookdown::bookdown_site
 ---
 
-# Down the rabbit-hole
+# March Madness Matchup Predictions
+
+## Introduction
+
+**Objective**
+
+*Predict winners of the 2024 Men's NCAA March Madness tournament matchups through various machine learning models (logistic regression, random forest, extreme gradient boosting (XGBoost), support vector machines (SVM), Naive Bayes, and multivariate adaptive regression splines (MARS))*
+
+* The MARS model performed the best on the test dataset and finished with an **ESPN score of 870 (69% accuracy) and 3/8 Elite 8 teams correct for the 2024 tournament.**
+
+* The XGBoost model performed the next best on the test dataset and finished with an **ESPN score of 360 (12.9% accuracy) and 1/8 Elite 8 teams correct for the 2024 tournament.**
+
+The XGBoost model heavily favored upsets and while it only had 1 of the 8 Elite 8 teams, it did correctly pick NC State to be there. Please see the **Results and Recommendations** section for a more detailed analysis of these model performances. 
+
+**Background**
+
+The NCAA March Madness tournament is an annual basketball tournament held every March. 64 teams compete against each other in a single game elimination, bracket style tournament. Individuals can build predictions on who they think will win for each possible matchup and how the bracket will turn out for each round of the March Madness tournament (Round of 64, Round of 32, Sweet 16, Elite 8, Final 4, and Championship). The odds of a perfect bracket are 1 in 9.2 quintillion, if you chose winners at random. 
+
+Consequentially, I was interested in using data science skills and machine learning models to help me in predicting the winners of these brackets. While I have no expectations of creating a perfect bracket, the statistics on team performance throughout the year provide data backed decisions on who will win certain matchups in the NCAA tournament.
+
+*How are points calculated for March Madness brackets in the ESPN Tournament Challenge?*
+
+- **Round of 64** = 10 points per correct pick (32 games)
+
+- **Round of 32** = 20 points per correct pick (16 games)
+
+- **Sweet 16** = 40 points per correct pick (8 games)
+
+- **Elite 8** = 80 points per correct pick (4 games)
+
+- **Final 4** = 160 points per correct pick (2 games)
+
+- **Championship** = 320 points per correct pick (1 game)
+
+The maximum possible points you can earn for a perfect bracket is 1920 points. In general, I would say most of my brackets in the past have scored around 400 - 900 points. Winning a large bracket pool usually will take a score of least 1000 points (picking the champion or some of the final 4 teams), but obviously depends on how the pool plays out each year. 
+
+It's extremely important to have your Elite 8 and Final 4 teams still alive after the first two rounds of the tournament because that keeps you in the running for the maximum points possible. The best bracket I have ever created was for the 2017 March Madness tournament, where I picked UNC to win the whole tournament and (luckily) chose South Carolina to be in the Final 4. This bracket scored a 1630. 
+
+**Data**
+
+The data collected was from the 2008 to 2023 March Madness tournaments on each game outcome. There are 63 games every tournaments, resulting in 944 rows of all tournament matchups in this time frame (1 game was cancelled in 2021 due to COVID-19). I chose to start in 2008 due to availability of the data as well as I wanted to use data that relevantly reflected the style of play of today's game. 
+
+This data included: 
+
+* Year
+
+* TeamA and TeamB
+
+* Tournament Seed
+
+* Final score of the matchup
+
+Individual team data was web-scraped from TeamRankings.com, Bart Torvik, and SportsReference.com (College Basketball). Please check the references section for a full list of the data sources, as well as web-scraping code. 
+
+This data included:
+
+* Team performance metrics and averages
+
+  - Field Goal %
+  - 3-point %
+  - Free Throw %
+  - Steals
+  - Assists
+  - Blocks
+  - Turnovers
+  - Personal fouls
+  - Total rebounds
+  - Offensive rebounds
+  - Opponent points per game (PPG)
+  - Opponent turnovers
+  - Win/Loss %
+  - Effective FG%
+  - Average Margin of Victory (MOV)
+  - Win/Loss % (past 10 games)
+  
+* Advanced metrics
+
+  - Offensive/Defensive efficiency (unadjusted)
+  - Pace of play
+  - Extra scoring chances
+  - Ratings percentage index (RPI)
+  
+* Bart Torvik formulas
+
+  - Offensive/Defensive efficiency (adjusted)
+  - Pace of play (adjusted)
+  - Wins above bubble (WAB - how many games a team won relative to a bubble-quality team)
+  - BARTHAG (overall team evaluation metric)
+  
+* Feature Engineered Variables I created
+
+  - Pythagorean Win Expectation
+  - Luck
+  - Pace (adjusted) / team efficiency (adjusted)
+  - Opponent turnovers / team turnovers
+
+## Methodology
+
+Here are the libraries I used to create this project:
+
+```{r message = FALSE, warning = FALSE}
+library(tidyverse)
+library(bookdown)
+library(ggplot2)
+library(car)
+library(corrplot)
+library(Hmisc)
+library(readxl)
+library(caret)
+library(glmnet)
+library(nortest)
+library(MASS)
+library(forcats)
+library(gmodels)
+library(vcdExtra)
+library(mgcv)
+library(DescTools)
+library(ROCit)
+library(randomForest)
+library(xgboost)
+library(smbinning)
+library(Ckmeans.1d.dp)
+library(e1071)
+library(klaR)
+library(earth)
+library(bookdown)
+library(reshape2)
+``` 
+
+Next, I load in the dataset. Please see https://github.com/tylerfarr5/march-madness for all associated data files. I chose to start by original dataset at 2008 because certain variables that I wanted to use in the model were not available until the start of the 2008 season. Additionally, one could make an argument that the game of college basketball in 2024 is not the same as it was in 2000, so the 2008 data will at least be more relevant to the game today. 
+
+```{r message = FALSE, warning = FALSE}
+mm_data <- read_excel("march_madness.xlsx", sheet = 2)
+
+#only want 2008-2023
+mm_data <- mm_data %>%
+  dplyr::filter(!(Year %in% 2000:2007))
+
+```
+
+
+A quick note about the data - I chose to compile many different data sources into one file, so I found it easier to web-scrape and compile everything in Microsoft Excel first, before reading that file R. A quick snapshot of what the data frame looked like is provided below:
+
+```{r message = FALSE, warning = FALSE}
+head(mm_data)
+```
+
+**Matchups**
+
+Here are some of the rules in place on matchup data in the dataset:
+
+- The higher seed will always be TeamA and the lower seed will be TeamB
+
+- If a matchup has two seeds that are the same number, then team with higher points per game will be TeamA
+
+- I differenced each teams' season statistics to evaluate how good or bad a team is relative to their opponent, and then used the differenced values as predictors in the model. The difference was TeamA minus TeamB.
+
+- Since a final score was provided from each game, that left an opportunity for a continuous target variable of the margin of victory (MOV), or a binary target variable for whether or not TeamA won the game. I chose to model the binary target variable for whether or not TeamA won. 
+
+
+**Pre and Post-Tourney Metrics**
+
+I had originally pulled my data from SportsReference, however I realized that these team statistics reflect post-NCAA tournament numbers. In order to build and evaluate the model on data that is most reflective of team performance, I needed to get data that was pre-tournament. For example, if Clemson were to get hot and start making 3-point shots throughout the March Madness tournament, that would likely drive up their season 3-point shooting percentage and is different from where they stood before the tournament.
+
+Before fully committing to using pre-tournament numbers, I performed paired t-tests (Wilcoxon signed rank test) and tests of normality (Shapiro-Wilks test) to evaluate pre and post tournament performance on a variety of team metrics. For some metrics, like a team's median field goal percentage, did not have a statistically significant different before and after the tournament. However, metrics like total rebounds, win-loss percentage, turnovers, and many more were statistically different. These results led me to conclude that I needed to use pre-tournament numbers. An example of how I did this is provided below. 
+
+```{r message = FALSE, warning = FALSE, eval = FALSE}
+#Team FG% - no statistical difference
+shapiro.test(with(mm_data, mm_data$Diff_FGPct - mm_data$Diff_FGPct_PRE))
+wilcox.test(mm_data$Diff_FGPct, mm_data$Diff_FGPct_PRE, paired = TRUE, alternative = 'two.sided')
+
+#Team Total Rebounds - statistically significant difference between pre and post-tournament numbers
+shapiro.test(with(mm_data, mm_data$Diff_TRB - mm_data$Diff_TRB_PRE))
+wilcox.test(mm_data$Diff_TRB, mm_data$Diff_TRB_PRE, paired = TRUE, alternative = 'two.sided')
+```
+
+
+```{r message = FALSE, warning = FALSE, echo = FALSE}
+mm_data$Year <- as.factor(mm_data$Year)
+mm_data$TeamA <- as.factor(mm_data$TeamA)
+mm_data$TeamB <- as.factor(mm_data$TeamB)
+mm_data$A_Seed <- as.factor(mm_data$A_Seed)
+mm_data$B_Seed <- as.factor(mm_data$B_Seed)
+```
+
+There was no missing data in the dataset. 
+
+Before exploring the data, I did a train/test split of the 2008 to 2023 tournaments data. I chose to use the 2023 tournament as my test dataset and evaluated how well the data built on 2008 to 2022 performed on the 2023 bracket. The training set is 881 rows and the testing set is 63 rows. 
+
+```{r message = FALSE, warning = FALSE}
+train <- mm_data[mm_data$Year != 2023,] #2000 - 2022 tournaments
+valid <- mm_data[mm_data$Year == 2023,] #2023 tournament
+
+train <- as.data.frame(train) #this helps SMBinning work
+valid <- as.data.frame(valid) #this helps SMBinning work
+```
+
+```{r warning= FALSE, message = FALSE, echo = FALSE}
+paste("Train Data (2008-2022 brackets) - Rows:", nrow(train))
+paste("Test Data (2023 bracket) - Rows:", nrow(valid))
+```
+
+**Model Evaluation**
+
+I chose to evaluate my models using area under the receiver operating characteristic (AUROC) curve, which balances sensitivity and specificity. However, since the best bracket is typically the one that scores the most points in the ESPN Tournament Challenge, I also evaluated how well my model scored in terms of ESPN points. 
+
+To do this, I generated every possible matchup for the 2023 tournament, so I could evaluate what the model chose in later rounds where it may have picked the wrong team to win in earlier rounds of the tournament. Here, I read in that dataset:
+
+```{r message = FALSE, warning = FALSE}
+conditional2023 <- read_excel("march_madness.xlsx", sheet = 5)
+
+head(conditional2023)
+```
+
+
+## Exploratory Data Analysis (EDA)
+
+Here, I dive a little deeper into various relationships between the variables in the training data before I build a model. 
+
+We start by looking at a correlation matrix of the differenced variables in the model. For generic team basketball metrics, I abbreviated them accordingly. As expected, we see strong correlations between teams offensive efficiencies and their points per game, pace of play, or average margin of victory. One interesting finding was a strong negative correlation between a team's defensive efficiency and their pythagorean expectation. 
+
+```{r warning = FALSE, message = FALSE}
+res <- cor(train[c(11:44)])
+
+colnames(res) <- c("FG% ", "3pt% ", "FT% ", "TRB ", "AST ", "STL ", "BLK ", "TO ", "PF ", "PPG ", "OppFG% ", "OppPPG ", "Unadjusted Off Efficiency ", "Unadjusted Def Efficiency ", "WL% ", "Pace ", "eFG% ", "OReb ", "AvgMOV ", "Extra Scoring ChancesPG ", "Pythagorean Expectation ", "Luck ", "RPI ", "RPI Strength of Schedule ", "WL% Past 10 ", "Adjusted Off Efficiency ", "Adjusted Def Efficiency ", "Adjusted Efficiency Margin ", "BARTHAG ", "Adjusted Tempo ", "Wins Above Bubble ", "OppTO ", "Adjusted Tempo/Adjusted Efficiency Margin Ratio ", "OppTO/TO Ratio ")
+
+rownames(res) <- c("FG% ", "3pt% ", "FT% ", "TRB ", "AST ", "STL ", "BLK ", "TO ", "PF ", "PPG ", "OppFG% ", "OppPPG ", "Unadjusted Off Efficiency ", "Unadjusted Def Efficiency ", "WL% ", "Pace ", "eFG% ", "OReb ", "AvgMOV ", "Extra Scoring ChancesPG ", "Pythagorean Expectation ", "Luck ", "RPI ", "RPI Strength of Schedule ", "WL% Past 10 ", "Adjusted Off Efficiency ", "Adjusted Def Efficiency ", "Adjusted Efficiency Margin ", "BARTHAG ", "Adjusted Tempo ", "Wins Above Bubble ", "OppTO ", "Adjusted Tempo/Adjusted Efficiency Margin Ratio ", "OppTO/TO Ratio ")
+
+corrplot::corrplot(res,type = "upper", order = "hclust", 
+                   tl.col = "black", tl.srt = 75, tl.cex = 0.6,
+#                   title = "Correlation Matrix on March Madness Matchup Data (2008-2022)", 
+                   mar=c(0,0,1,0))
+```
+
+Next, I also wanted to see these correlations in a tabular format so I could quickly sort through the strongest correlations. I used a function I found online to flatten out the correlation matrix to pair relationships.
+
+There are some strong correlations which will be good to note in terms of multicollinearity as I continue the model building process. For example, Adjusted Tempo and Pace are highly correlated. 
+
+```{r warning = FALSE, message = FALSE}
+
+flattenCorrMatrix <- function(cormat) {
+  ut <- upper.tri(cormat)
+  data.frame(
+    row = rownames(cormat)[row(cormat)[ut]],
+    column = rownames(cormat)[col(cormat)[ut]],
+    cor  =(cormat)[ut]
+  )
+}
+
+prev.corrs <- train[c(11:44)]
+res2<-rcorr(as.matrix(prev.corrs))
+previous.correlations <- flattenCorrMatrix(res2$r)
+
+head(dplyr::arrange(previous.correlations, desc(cor)),20)
+```
+
+
+**Visual Exploration**
+
+I wanted to start with some quick tournament performance evaluations on tournament performance for the training data of 2008 to 2022. As expected, the higher seed wins any given matchup 70.8% of the time. 
+```{r message = FALSE, warning = FALSE, echo = FALSE}
+ggplot(data = train, aes(x=as.factor(Winner_A))) +
+  geom_histogram(stat = 'count', fill = "skyblue", alpha = 0.8, color = "black", size = 2) +
+  geom_text(stat = "count", aes(label = ..count..), vjust = 2, size = 8) +
+  theme_classic()  +
+  scale_x_discrete(labels = c("No", "Yes")) +
+  labs(x = "Higher Seed Wins", y = "Count", title = "Count of Games Won by Higher Seed")
+```
+
+I was also interested in breaking down these wins by round of tournament and team seed. We expect to see the higher seed win more matchups than the lower seed across all rounds of the NCAA tournament. However, it is interesting to note that the Elite 8 has almost 45% of the lower seeds winning tournament games, bringing slightly more parity to this round of the tournament. 
+```{r message = FALSE, warning = FALSE}
+#find proportions of wins and losses
+proportions <- aggregate(Winner_A ~ Round, data = train, FUN = function(x) c(Prop_Winner = mean(x), Prop_Loser = 1 - mean(x)))
+
+# Convert result to data frame
+winners <- as.data.frame(proportions$Winner_A)
+proportions <- cbind(proportions$Round, winners)
+colnames(proportions)[1] = "Round"
+
+
+melted_data <- reshape2::melt(proportions, id.vars = "Round")
+
+# Plot side-by-side barplot using facets
+ggplot(melted_data, aes(x = variable, y = value, fill = variable)) +
+  geom_bar(stat = "identity", position = "dodge", colour = "black") +
+  facet_wrap(~ Round) +
+  scale_fill_manual(name = "Outcome", values = c("Prop_Winner" = "skyblue", "Prop_Loser" = "salmon")) +
+  labs(title = "Proportions of Games Won by the Higher Seed by Round", x = NULL, y = "Proportion") +
+  theme_classic()
+```
+
+In regard to seeds, the bar chart breaks down total wins by a higher and lower seed. The sky blue color represents every time a certain seed was higher than its opponents, while the salmon color represents every time a certain seed was lower than its opponents. For example, a 16 seed will always be the lower seed (unless an instance occurred where it was playing another 16 seed in the Final Four and had a higher points per game than its opponent) and we know that a 16 seed has only won one time over the course of the training set (2008 - 2022). 
+
+1 seeds are usually the higher seed and clearly dominate in their matchups. There have been certain instances where some 1 seeds have played other 1 seeds, in which case one of them would have to be the "lower seed" for that matchup. One interesting trend in the bar chart below is the 11 and 12 seeds. 11 seeds have the 5th highest number of wins, despite being the underdog in their matchups. 
+```{r message = FALSE, warning = FALSE, echo = FALSE}
+win_counts <- train %>%
+  pivot_longer(cols = "A_Seed", names_to = "Seed_Type", values_to = "Seed") %>%
+  dplyr::filter(Winner_A == 1) %>%
+  dplyr::group_by(Seed_Type, Seed) %>%
+  dplyr::summarise(Wins = n()) %>%
+  dplyr::ungroup()
+
+lose_counts <- train %>%
+  pivot_longer(cols = "B_Seed", names_to = "Seed_Type", values_to = "Seed") %>%
+  filter(Winner_A == 0) %>%
+  group_by(Seed_Type, Seed) %>%
+  dplyr::summarise(Losses = n()) %>%
+  ungroup()
+
+# Merge winners and losers data
+win_loss_data <- full_join(win_counts, lose_counts, by = c("Seed_Type", "Seed"))
+win_loss_data$Wins <- ifelse(is.na(win_loss_data$Wins), 0, win_loss_data$Wins)
+win_loss_data$Losses <- ifelse(is.na(win_loss_data$Losses), 0, win_loss_data$Losses)
+
+# Plot the barplot
+ggplot(win_loss_data, aes(x = Seed, fill = Seed_Type)) +
+  geom_bar(aes(y = Wins), stat = "identity", position = "dodge", color = "black", alpha = 0.8) +
+  geom_bar(aes(y = Losses), stat = "identity", position = "dodge", color = "black", alpha = 0.8) +
+  labs(title = "Total Wins by Higher and Lower Seeds", x = "Seed", y = "Count") +
+  scale_fill_manual(name = "Seed Type" ,values = c("A_Seed" = "skyblue", "B_Seed" = "salmon"), labels = c("A_Seed" = "Higher Seed", "B_Seed" = "Lower Seed")) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Lastly, I wanted to provide a quick visual of what teams have played in the most March Madness games. Kansas, UNC, and Gonzaga lead the way with the majority of tournament appearances. This does not necessarily mean that they will win matchups, but it does indicate that they are teams who are experienced in showing up at the March Madness tournament. 
+
+```{r}
+allTeams <- c(unlist(mm_data$TeamA),unlist(mm_data$TeamB))
+
+barplot(sort(table(allTeams), decreasing = TRUE)[1:10],
+        main = 'Top 10 Teams to Play in March Madness (2008-2022)',
+        xlab = 'Teams',
+        ylab = 'Total Games Played', las = 2)
+```
+
+I did also explore a variable that I later removed from the model. It was a binary flag indicator for whether or not the team was top 12 in the week 6 AP Poll, as the champion has always top 12 in the week 6 AP Poll. While correlation does not equal causation, I thought it would be interesting to include as a variable for analysis. 
+
+Using both a Chi-Square test and a Mantel-Haenszel test, I found that the distribution of the higher seed winning a matchup changes across the distribution of a higher seed of losing a matchup. The Mantel-Haenszel test confirmed a linear association between the two distributions. 
+
+Using odds ratios, we can interpret this as teams in the top 12 week 6 AP Poll are 1.64 times more likely to win their matchup than lose for teams not in the top 12 week 6 AP Poll.
+
+```{r message = FALSE, warning = FALSE, eval = FALSE}
+CrossTable(train$Winner_A, train$Top12_Week6APPoll, expected = TRUE) #assumptions passed - expected values greater than 5
+
+chisq.test(table(train$Winner_A, train$Top12_Week6APPoll)) #significant, < 2.67e-05... so the distribution of one variable changes across the distribution of another variable
+
+#mantel haenszel test
+CMHtest(table(train$Winner_A, train$Top12_Week6APPoll))$table[1,] #linear association, < 2.05e-05
+
+#interpretation
+OddsRatio(table(train$Winner_A, train$Top12_Week6APPoll)) #1.637964 for train
+```
+
+
+## Modeling
+
+Before starting modeling, I explored creating some additional variables to improve predictability in the model. The first variable I created was the Pythagorean Expectation of a team's winning percentage. It is the expected winning percentage a team should have had, given the number of points they scored and allowed in a season. I provide code in the appendix on how I optimized the exponent for this formula. 
+
+Additionally, I created another variable that describes a team's luck, which is the difference between a team's expected win percentage (Pythagorean Expectation) and their actual win percentage. I figured if a team's expected win percentage of 0.5, but they are actually at 0.625, then maybe they are a lucky team and winning some close games. 
+
+Lastly, I explored two additional variables: Adjusted Tempo / Adjusted Efficiency Margin and the Opponent Turnovers / Team Turnover ratios. These have been useful in flagging certain strengths in teams that can possibly generate upsets for the March Madness tournament. 
+
+
+**Conservative Alpha Level and Weighting**
+
+A conservative alpha level of 0.01, instead of 0.05, was chosen for model significance testing since there are 881 observations in the training set and we need to adjust it to reflect a higher sample size.
+
+Before modeling, I did also explore creating weights, so the model puts higher importance on getting Round of 64 matchups right versus a Championship matchup correct. I used a weighting scheme on how ESPN calculates March Madness points. I explored this possibility because my predictions for the Elite 8 won't matter if I don't have any correct predictions of the teams in the Elite 8. 
+
+```{r message = FALSE, warning = FALSE}
+train <- train %>%
+  mutate(wts = case_when(
+    Round == 'Round64' ~ 320,
+    Round == 'Round32' ~ 160,
+    Round == 'Sweet16' ~ 80,
+    Round == 'Elite8' ~ 40,
+    Round == 'Final4' ~ 20,
+    Round == 'Championship' ~ 10,
+    TRUE ~ 0  # Default condition, if none of the above conditions are met
+  ))
+
+valid <- valid %>%
+  mutate(wts = case_when(
+    Round == 'Round64' ~ 320,
+    Round == 'Round32' ~ 160,
+    Round == 'Sweet16' ~ 80,
+    Round == 'Elite8' ~ 40,
+    Round == 'Final4' ~ 20,
+    Round == 'Championship' ~ 10,
+    TRUE ~ 0  # Default condition, if none of the above conditions are met
+  ))
+```
+
+
+**Logistic Regression**
+
+Logistic Regression is by far the most time intensive model in terms of validating assumptions, binning, and coding out the model. I start by validating assumptions of the logistic regression model in my dataset, which are independent rows and the continuous predictor variables are linearly related to the logit.
+
+I first explored a distribution of each variable in the model (output can be found in the appendix). Most variables appeared to be relatively normal, with only slight skewness and not needing any major transformations. 
+
+In regard to checking the linearity assumption for the continuous predictor variables, I fit a GAM model and a logistic regression model with only one of the predictor variables at a time. Next, I run an Chi-Square ANOVA test to see if there is a statistically significant difference between the GAM model and the logit model. The loop prints out for each variable if the assumption was met or not met. 
+
+```{r warning = FALSE, message = FALSE }
+
+var.names <- colnames(train)[c(11:44)]
+
+assumption_df <- data.frame("Variable" = as.character(), "Assumption" = as.character(), "P-Value" = as.numeric(), "EDF" = as.numeric())
+
+for (i in var.names) {
+  xvar <- (train[[i]]) #this is needed to get the gam to run
+  fit.gam <- mgcv::gam(Winner_A~s(xvar), data = train, family = binomial(link = "logit"), method = "REML")
+  logit.model <- glm(Winner_A ~ train[[i]], data = train, family = binomial(link = "logit"))
+  pval <- anova(logit.model, fit.gam, test = 'Chisq')$`Pr(>Chi)`[2]
+  
+  if (pval < 0.01) {
+    assumption_df[nrow(assumption_df) + 1,] = c(i, "ASSUMPTION NOT MET", round(pval,5), summary(fit.gam)$edf)
+    #print(paste(i, "**___ASSUMPTION NOT MET___**", "P-Value - ",round(pval,5), "EDF - ", round(summary(fit.gam)$edf),5))
+  } else {
+    assumption_df[nrow(assumption_df) + 1,] = c(i, "Passed", round(pval,5), summary(fit.gam)$edf)
+    #print(paste(i, "Assumption Met", "P-Value - ", round(pval,5), "EDF - ", round(summary(fit.gam)$edf),5))
+  }
+  
+  #plot(fit.gam, xlab = i) Not printing to save space
+}
+assumption_df
+```
+
+Since only 12 of the 34 variables passed the linearity assumption, I decided to explore strategically binning all continuous variables via SMBinning. The code below finds the optimal splits in a continuous variable that still capture the signal associated with predicting the winner of the matchup. An example of the distribution of the Pythagorean Expectation and average margin of victory (MOV) variables are provided below. As you can see, there is a fairly stark difference in the average MOV buckets, which should make for a good variable in the model. 
+
+The third plot shows the strongest predictors within the model based on information value (IV). IV measures the ability of a variable to separate winners and losers. While this metric is mostly used for variable selection in banking, I find it effective in this situation as well. I think it's important to recognize that a common cutoff in banking is an IV greater than or equal to 0.1 to select variables, however, I wanted to keep all binned variables that were binned with an IV greater than or equal to 0.01 (which ended up being all variables binned). 
+
+```{r warning = FALSE, message = FALSE, echo= FALSE}
+numeric <- colnames(train[,sapply(train,is.numeric)])
+numeric <- numeric[5:38] #don't need A_Score, B_Score, or MOV (response vars) or wts
+
+allBins <- c()
+#generates possible bins for numeric vars
+for (i in numeric){
+  allBins[[i]] = smbinning(df = train, y = "Winner_A", x = i) 
+}
+```
+
+```{r message=FALSE, warning=FALSE, echo = FALSE}
+#plots of strong variables
+smbinning.plot(allBins$Diff_PythagoreanExp,option="dist",sub="Diff_Pythagorean_Exp")
+smbinning.plot(allBins$Diff_AvgMOV_PRE,option="dist",sub="Diff_AvgMOV_PRE")
+
+
+#evaluates variables
+smbinning.sumiv.plot(smbinning.sumiv(df = train[c(9:44)], y = "Winner_A"), cex = 0.6)
+
+```
+
+```{r warning = FALSE, message = FALSE, include = FALSE, echo = FALSE}
+#test if IV > 0.01. 0.1 is standard for credit modeling, but want to increase predictability, and then generates binned column
+for (j in numeric) {
+  if (is.na(allBins[[j]]["iv"])) {
+    next
+  } else if (allBins[[j]]["iv"] >= 0.01) {
+    train <- smbinning.gen(df = train, ivout = allBins[[j]], chrname = paste(j, "_bin", sep = ""))
+  }
+}
+
+for (j in numeric) {
+  if (is.na(allBins[[j]]["iv"])) {
+    next
+  } else if (allBins[[j]]["iv"] >= 0.01) {
+    valid <- smbinning.gen(df = valid, ivout = allBins[[j]], chrname = paste(j, "_bin", sep = ""))
+  }
+}
+
+#also creates strategic bins for conditional dataset
+conditional2023 <- conditional2023 %>%
+  mutate(Diff_STL_PRE_bin = case_when(
+    Diff_STL_PRE <= -0.2 ~ "01 <= -0.2",
+    Diff_STL_PRE > -0.2 ~ "02 > -0.2",
+    TRUE ~ "0"  # Default condition, if none of the above conditions are met
+  ),
+    Diff_TO_PRE_bin = case_when(
+      Diff_TO_PRE <= -2.9 ~ "01 <= -2.9",
+      Diff_TO_PRE > -2.9 ~ "02 > -2.9",
+      TRUE ~ "0"  # Default condition, if none of the above conditions are met
+    ),
+    Diff_AdjEM_PRE_bin = case_when(
+      Diff_AdjEM_PRE <= -2.6411 ~ "01 <= -2.6411",
+      Diff_AdjEM_PRE <= 10.1276 ~ "02 <= 10.1276",
+      Diff_AdjEM_PRE <=15.1675 ~ "03 <= 15.1675",
+      Diff_AdjEM_PRE > 15.1675 ~ "04 > 15.1675", 
+      TRUE ~ "0"  # Default condition, if none of the above conditions are met
+    ))
+
+conditional2023$Diff_STL_PRE_bin <- as.factor(conditional2023$Diff_STL_PRE_bin)
+conditional2023$Diff_TO_PRE_bin <- as.factor(conditional2023$Diff_TO_PRE_bin)
+conditional2023$Diff_AdjEM_PRE_bin <- as.factor(conditional2023$Diff_AdjEM_PRE_bin)
+
+```
+
+
+The NCAA tournament selection committee, up until 2018, used the ratings percentage index (RPI), to decide which teams should play in the March Madness tournament or not. After 2018 they decided to switch to NCAA evaluation tool (NET) to pick teams, as it does a better job at evaluating a team's strength of schedule. Since the committee no longer uses this RPI variable to select teams, I was unsure of whether or not to include this variable in the model.
+
+My solution was to perform a Likelihood Ratio Rest for a model with and without the two RPI variables (total team RPI and team RPI strength of schedule). The results of the test fails to reject the null hypothesis, proving that the smaller model (without RPI variables) is the better model. I used AIC and BIC to prove this evaluation and did decide to drop the RPI variables.
+
+```{r message = FALSE, warning = FALSE, echo = FALSE}
+train$Winner_A <- as.factor(train$Winner_A)
+
+modwithRPI <- glm(Winner_A ~ .
+                  , data = train[c(9, 46:70)], family = binomial(link = "logit"))
+
+
+modwithoutRPI <- glm(Winner_A ~ .
+                  , data = train[c(9, 46:61, 64:70)], family = binomial(link = "logit"))
+
+lmtest::lrtest(modwithRPI, modwithoutRPI)
+
+print(paste("Model with RPI variables - ", "(AIC)", round(AIC(modwithRPI),3), "(BIC)", round(BIC(modwithRPI),3)))
+print(paste("Model without RPI variables - ", "(AIC)", round(AIC(modwithoutRPI),3), "(BIC)", round(BIC(modwithoutRPI),3)))
+```
+
+```{r message = FALSE, warning = FALSE, echo = FALSE, include = FALSE}
+
+#dropping the RPI variables and Round
+weights <- train$wts
+weights_v <- valid$wts
+train <- train %>%
+  dplyr::select(-Diff_TotalRPI_PRE_bin, -Diff_RPI_SOS_PRE_bin, -Round)
+
+valid <- valid %>%
+  dplyr::select(-Diff_TotalRPI_PRE_bin, -Diff_RPI_SOS_PRE_bin, -Round)
+```
+
+
+Now, let's jump into the logistic regression model. By converting all variables to categorical via SMBinning, the logistic regression has now passed all of its assumptions. I added many variables after strategically binning, which all had an IV of at least 0.01. I decided to perform backward selection first using a significance level of 0.01. This left me with 3 binned variables: Difference in Steals, Difference in Turnovers, and Difference in Adjusted Efficiency Margin. 
+
+I did one final check of multicollinearity with VIF and a likelihood ratio test to ensure all variables were significant and not correlated. Both checks passed. 
+
+```{r message = FALSE, warning= FALSE, include = FALSE, echo = FALSE}
+full.model <- glm(Winner_A ~ Diff_FGPct_PRE_bin + Diff_AST_PRE_bin + Diff_STL_PRE_bin + Diff_BLK_PRE_bin + Diff_TO_PRE_bin + Diff_PF_PRE_bin + Diff_PPG_PRE_bin + Diff_OppPPG_PRE_bin + Diff_UnadjOffEff_PRE_bin + Diff_UnadjDefEff_PRE_bin + Diff_WLPct_PRE_bin + Diff_OReb_PRE_bin + Diff_AvgMOV_PRE_bin + Diff_ExtraScoringChancesPG_PRE_bin + Diff_PythagoreanExp_PRE_bin + Diff_Luck_PRE_bin + Diff_AdjO_PRE_bin + Diff_AdjD_PRE_bin + Diff_AdjEM_PRE_bin + Diff_BARTHAG_PRE_bin + Diff_WAB_PRE_bin + Diff_OppTO_PRE_bin + Diff_OppTO_TeamTO_Ratio_PRE_bin
+                  , data = train, family = binomial(link = "logit"))
+
+empty.model <- glm(Winner_A ~ 1, data = train, family = binomial(link = "logit"))
+
+#use 0.01to adjust for sample size
+step.model <- step(full.model, scope = list(lower = empty.model, upper = full.model), direction = "backward", k = qchisq(0.01, 1, lower.tail = FALSE))
+```
+
+```{r message = FALSE, warning = FALSE}
+new.model <- glm(Winner_A ~ Diff_STL_PRE_bin + Diff_TO_PRE_bin + Diff_AdjEM_PRE_bin, data = train, family = binomial(link = "logit"))
+
+#Checking multicollinearity and using Likelihood Ratio Test (LRT)
+car::vif(new.model) #all < 5
+car::Anova(new.model, test = 'LR', type = 'III') #all sig
+```
+
+
+After building the model, I did a quick evaluation metric using the coefficient of discrimination (plotting how well the model separates winners and losers). It appears the model does a pretty good job of discriminating between winners and losers when the predicted probability is either very high or very low. However, predicted probabilities closer to 0.45 to 0.75 are a complete tossup and it does quite poorly. 
+
+```{r message = FALSE, warning = FALSE, echo = FALSE}
+p_hat <- predict(new.model, type = "response")
+logit_roc <- rocit(p_hat, train$Winner_A)
+
+p1 <- p_hat[train$Winner_A == 1]
+p0 <- p_hat[train$Winner_A == 0]
+
+coef_discrim <- mean(p1) - mean(p0)
+
+ggplot(train, aes(p_hat, fill = factor(Winner_A))) + 
+  geom_density(alpha = 0.7) + 
+  scale_fill_grey() + 
+  labs(x = "Predicted Probability", fill = "Outcome", title = paste("Coefficient of Discrimination = ", round(coef_discrim,3), sep = ""))
+```
+
+```{r message = FALSE, warning = FALSE, echo = FALSE, include = FALSE}
+#validation p hat (will be used later)
+LogReg <- ifelse(p_hat>plot(logit_roc)$optimal[4],1,0)
+conditional2023$espnLogReg <- predict(new.model, newdata = conditional2023, type = 'response')
+conditional2023$winnerLogReg <- ifelse(conditional2023$espnLogReg > plot(logit_roc)$optimal[4],1, 0)
+p_hat <- predict(new.model, newdata = valid, type = "response")
+logit_roc_v <- rocit(p_hat, valid$Winner_A)
+
+```
+
+
+**Random Forest**
+
+The next model I tried was a Random Forest model. Firstly, I want to see what the best number of trees is to use for the model. It appears the MSE levels out around 250 trees, but to be safe since computing time isn't an issue here, I use 500 trees. 
+
+```{r message = FALSE, warning = FALSE, echo = FALSE, include = FALSE}
+train <- mm_data[mm_data$Year != 2023,] #2000 - 2022 tournaments
+valid <- mm_data[mm_data$Year == 2023,] #2023 tournament
+
+train <- as.data.frame(train)
+valid <- as.data.frame(valid) #resets train set & removes bins from above
+
+train$Winner_A <- as.factor(train$Winner_A)
+valid$Winner_A <- as.factor(valid$Winner_A)
+
+train <- train %>%
+  dplyr::select(-c(Year, TeamA, TeamB, A_Seed, B_Seed, A_Score, 
+                   B_Score, MOV, Diff_RPI_SOS_PRE, Diff_TotalRPI_PRE,Round))
+
+valid <- valid %>%
+  dplyr::select(-c(Year, TeamA, TeamB, A_Seed, B_Seed, A_Score, 
+                   B_Score, MOV, Diff_RPI_SOS_PRE, Diff_TotalRPI_PRE,Round))
+```
+
+
+```{r message = FALSE, warning = FALSE, echo = FALSE}
+set.seed(12345) #can set ntree to 500 or 1000
+rf.mm <- randomForest(Winner_A ~ ., data = train, ntree = 500, 
+                      importance = TRUE, method = 'class')
+
+plot(rf.mm, main = "Number of Trees Compared to MSE")
+```
+
+
+The next step is to tune the Random Forest model with 500 trees. I need to figure out what the optimal number of random variables to use at each split is, so I create an elbow plot. The out-of-bag observation error is minimized with an mtry of 5, so that is what I will use to train the model. 
+```{r warning = FALSE, message = FALSE}
+#tuning model
+set.seed(12345)
+tuneRF(x = train[,-1], y = train[,1], #column 1 has response variable
+       plot = TRUE, ntreeTry = 500, stepFactor = 0.5, method = 'class')
+
+#above output said optimal mtry is 5.
+set.seed(12345)
+rf.mm <- randomForest(Winner_A ~., 
+                      data = train, ntree = 500, mtry = 5, importance = TRUE,
+                      method = 'class')
+```
+
+Lastly, I thought it might be interesting to include a variable importance plot. Using mean decrease in accuracy as well as mean decrease in Gini as evaluation metrics, it appears that the difference in two teams' adjusted efficiency margin, wins above bubble, BARTHAG, adjusted offensive + defensive efficiency, and the adjusted tempo/adjusted efficiency margin ratio are all top predictors in the model. 
+
+```{r warning = FALSE, echo = FALSE, message = FALSE}
+# variable importance
+varImpPlot(rf.mm,
+           sort = TRUE,
+           n.var = 25,
+           main = "Variable Importance Plots for Random Forest",
+           cex = 0.6)
+```
+
+
+**XGBoost**
+
+The next model I tried was an Xtreme Gradient Boosting (XGBoost) model. Like a tree-based algorithm that Random Forest uses, this model sequentially builds its trees based on the error of the previous split. 
+
+```{r warning = FALSE, message = FALSE, echo = FALSE, include = FALSE}
+train_x <- model.matrix(Winner_A ~ ., data = train)[, -1]
+train_y <- as.numeric(train$Winner_A)-1
+weights <- train$wts
+
+valid_x <- model.matrix(Winner_A ~., data = valid)[,-1]
+valid_y <- as.numeric(valid$Winner_A)-1
+```
+
+I start by running a cross validation search to minimize the number of trees on the test root mean square error (RMSE). We see that 3 trees appears to be optimal. 
+
+I then run a grid search across number of trees, learning rate, maximum depth of the trees, and subsampling. XGBoost is very flexible for hyperparameter tuning and grid searching. Lastly, I run these possible grid values through a 10-fold cross validation with XGBoost to determine the optimal parameters.
+```{r message = FALSE, warning = FALSE, echo = FALSE}
+set.seed(12345)
+xgbcv.mm <- xgb.cv(data = train_x, label = train_y, 
+                   nrounds = 50, nfold = 10)
+```
+
+
+We see that the best tune to this grid search is 3 trees, a max depth of 2, a learning rate of 0.4, subsample ratio of columns when constructing each tree of 0.9, and subsample ratio of 0.8. 
+```{r message= FALSE, warning = FALSE}
+############# grid search to optimize parameters
+tune_grid <- expand.grid(
+  nrounds = 3, #c(4:6),
+  eta = c(0.05, 0.1, 0.25,0.4, 0.45),
+  max_depth = c(2:5),
+  gamma = c(0),
+  colsample_bytree = c(0.9, 1),
+  min_child_weight = 1,
+  subsample = c(0.8, 0.9, 1)
+)
+
+set.seed(12345) #
+xgb.ins.caret <- caret::train(x = train_x, y = train_y,
+                              method = "xgbTree",
+                              tuneGrid = tune_grid,
+                              trControl = trainControl(method = 'cv', # Using 10-fold cross-validation
+                                                       number = 10),
+                              objective = "binary:logistic",
+                              verbosity =0) #gets rid of warning messages
+
+plot(xgb.ins.caret)
+
+xgb.ins.caret$bestTune
+```
+Lastly, I define the final model with the tuned parameters and look at variable importance. This plot will automatically cluster variables statistically based on similar gain. We see the most important cluster is the difference in a team's adjusted efficiency margin. The second most important cluster consists of multiple variables, such as the difference in a team's wins above bubble, BARTHAG, Opponent Turnover to Team Turnover ratio, Adjusted Offensive Efficiency, Adjusted Tempo to Adjusted Efficiency Margin ratio, Adjusted Defensive Efficiency, and Steals. 
+```{r warning = FALSE, message= FALSE, include = FALSE, echo = FALSE}
+set.seed(12345)
+xgb.mm <- xgboost(data = train_x, label = train_y, 
+                  nrounds = 3, objective = "binary:logistic",
+                  max_depth = 2, eta = 0.4, subsample = 0.8)
+
+```
+
+```{r message = FALSE, warning = FALSE, echo = FALSE}
+# variable importance
+xgb.ggplot.importance(xgb.importance(feature_names = colnames(train_x), model = xgb.mm)) +
+  theme_classic()
+
+
+```
+
+
+**Support Vector Machine (SVM)**
+
+For the next model to try, I explored a support vector machine (SVM) model. I used the svm() function since this is a classification problem and a radial kernel to capture more non-linearities in the data. 
+
+```{r message= FALSE, warning = FALSE}
+#Building the svm model
+set.seed(12345)
+svm.mm <- svm(train_x, train_y, kernel = "radial", probability = TRUE)
+```
+
+
+**Naive Bayes **
+
+Now I explored a Naive Bayes model, another great supervised classification model. This looks to classify based on observations similar characteristics or features and also evaluates based on past decisions of observations similar to this one. This approach is an alternative to the frequentist approach in statistics, with instead trying a Bayesian approach. 
+
+I do try a grid search for a few different hyperparameters to try and fit the best Naive Bayes model. 
+```{r warning = FALSE, message = FALSE}
+tune_grid <- expand.grid(
+  usekernel = c(TRUE, FALSE),
+  fL = c(0, 0.5, 1),
+  adjust = c(0.1, 0.5, 1)
+)
+
+set.seed(12345)
+nb.mm.caret <- caret::train(Winner_A ~ ., data = train,
+                            method = "nb", 
+                            tuneGrid = tune_grid,
+                            trControl = trainControl(method = 'cv', number = 10))
+
+nb.mm.caret$bestTune
+
+set.seed(12345)
+nb.mm <- naiveBayes(Winner_A ~., data = train, laplace = 0, usekernel = TRUE, fL = 0, adjust = 0.1)
+
+```
+
+
+**Multivariate Adaptive Regression Splines (MARS)**
+
+MARS! This one is outta this world! This approach essentially uses piecewise regression to split into linear/non-linear patterns for each piece. Each split is a "knot" with more knots = more lines. MARS avoid overfitting with the knots by using generalized cross validation (GCV), a fast cross validation method. 
+
+We see from the model summary that 6 of the 32 variables were used, which appear to be differences in: total rebounds, personal fouls, offensive rebounds, adjusted efficiency margin, BARTHAG, and wins above bubble. The variable importance printout also highlights the number of subsets we saw these variables occur in, so this model supports the adjusted efficiency margin is most important (just like the other models have supported as well). 
+
+```{r warning = FALSE, message = FALSE}
+mars2 <- earth(Winner_A ~ ., data = train, glm = list(family = binomial(link= "logit")))
+summary(mars2)
+
+evimp(mars2)
+```
+
+**Weighted XGBoost**
+
+Here, I am looking to evaluate the XGBoost model with weights on various rows. For example, I thought that putting a higher weight on the Round of 64 matches to put a stronger priority on getting those picks right, might help make the model succeed later on for later rounds of the tournament. 
+
+```{r warning = FALSE, message = FALSE}
+######### CV to minimize number of trees --> 4 or 5
+set.seed(12345)
+xgbcv.mm.w <- xgb.cv(data = train_x, label = train_y, 
+                   nrounds = 50, nfold = 10, weight = weights)
+
+
+
+############# grid search to optimize parameters
+tune_grid <- expand.grid(
+  nrounds = 3, #c(4:6),
+  eta = c(0.05, 0.1, 0.25,0.4, 0.45),
+  max_depth = c(2:5),
+  gamma = c(0),
+  colsample_bytree = c(0.9, 1),
+  min_child_weight = 1,
+  subsample = c(0.8, 0.9, 1)
+)
+
+set.seed(12345) #
+xgb.ins.caret <- caret::train(x = train_x, y = train_y,
+                              method = "xgbTree",
+                              tuneGrid = tune_grid,
+                              trControl = trainControl(method = 'cv', # Using 10-fold cross-validation
+                                                       number = 10),
+                              objective = "binary:logistic",
+                              weights = weights,
+                              verbosity =0) #gets rid of warning messages
+
+xgb.ins.caret$bestTune
+
+
+set.seed(12345)
+xgb.mm.w <- xgboost(data = train_x, label = train_y, 
+                  nrounds = 3, objective = "binary:logistic",
+                  max_depth = 2, eta = 0.45, subsample = 1, weight = weights)
+```
+
+## Model Comparison
+
+Now that I have built these models, let's compare on the validation sets. I separately calculated the logistic regression AUC's in code chunks above since there were two separate datasets.
+
+The main takeaways from this output are that the MARS, XGBoost/Weighted XGBoost, and Random Forest models perform the best. It is interesting to see such a high AUC for the SVM model on the training set, but you can see as it sees new data in the validation set it does much worse (hence, overfitting). 
+
+```{r warning = FALSE, message = FALSE}
+model_eval_df <- data.frame(Model = character(),
+                            Train_AUC = numeric(),
+                            Valid_AUC = numeric())
+#log reg
+model_eval_df <- rbind(model_eval_df, c("Logistic Regression", logit_roc$AUC, logit_roc_v$AUC))
+
+#xgboost
+p_hat <- predict(xgb.mm, newdata = train_x, type = "prob")
+logit_roc <- rocit(p_hat, train$Winner_A)
+
+conditional2023_x <- model.matrix(~., data = conditional2023[6:37])[,c(-1)]
+conditional2023$espnXGB <- predict(xgb.mm, newdata = conditional2023_x, type = 'prob')
+conditional2023$winnerXGB <- ifelse(conditional2023$espnXGB > plot(logit_roc)$optimal[4],1, 0)
+
+p_hat <- predict(xgb.mm, newdata = valid_x, type = "prob")
+logit_roc_v <- rocit(p_hat, valid$Winner_A)
+
+model_eval_df <- rbind(model_eval_df, c("XGBoost", logit_roc$AUC, logit_roc_v$AUC))
+
+#random forest
+p_hat <- predict(rf.mm, type = "prob")
+logit_roc <- rocit(p_hat[,2],train$Winner_A)
+
+conditional2023$espnRF <- predict(rf.mm, newdata = conditional2023, type = 'prob')
+conditional2023$winnerRF <- ifelse(conditional2023$espnRF[,2] > plot(logit_roc)$optimal[4],1, 0)
+
+p_hat <- predict(rf.mm, newdata = valid, type = "prob")
+logit_roc_v <- rocit(p_hat[,2], valid$Winner_A)
+
+model_eval_df <- rbind(model_eval_df, c("Random Forest", logit_roc$AUC, logit_roc_v$AUC))
+
+#mars
+p_hat <- predict(mars2, newdata = train, type = "response")
+logit_roc <- rocit(p_hat[,1], train$Winner_A)
+
+conditional2023$espnMARS <- predict(mars2, newdata = conditional2023, type = 'response')
+conditional2023$winnerMARS <- ifelse(conditional2023$espnMARS[,1] > plot(logit_roc)$optimal[4],1, 0)
+
+
+p_hat <- predict(mars2, newdata = valid, type = 'response')
+logit_roc_v <- rocit(p_hat[,1], valid$Winner_A)
+
+model_eval_df <- rbind(model_eval_df, c("MARS", logit_roc$AUC, logit_roc_v$AUC))
+
+#svm
+p_hat <- predict(svm.mm, newdata = train_x)
+logit_roc <- rocit(p_hat, train$Winner_A)
+
+p_hat <- predict(svm.mm, newdata = valid_x, probability = TRUE)
+logit_roc_v <- rocit(p_hat, valid$Winner_A)
+
+model_eval_df <- rbind(model_eval_df, c("SVM", logit_roc$AUC, logit_roc_v$AUC))
+
+#naive bayes
+p_hat <- predict(nb.mm, newdata = train, type = "raw")
+logit_roc <- rocit(p_hat[,2], train$Winner_A)
+
+p_hat <- predict(nb.mm, newdata = valid, type = 'raw')
+logit_roc_v <- rocit(p_hat[,2], valid$Winner_A)
+
+model_eval_df <- rbind(model_eval_df, c("Naive Bayes", logit_roc$AUC, logit_roc_v$AUC))
+
+#weighted xgboost
+p_hat <- predict(xgb.mm.w, newdata = train_x, type = "prob")
+logit_roc <- rocit(p_hat, train$Winner_A)
+
+p_hat <- predict(xgb.mm.w, newdata = valid_x, type = "prob")
+logit_roc_v <- rocit(p_hat, valid$Winner_A)
+
+model_eval_df <- rbind(model_eval_df, c("Weighted XGBoost", logit_roc$AUC, logit_roc_v$AUC))
+
+colnames(model_eval_df) <- c('Model', 'Train AUC', 'Validation AUC')
+
+model_eval_df %>%
+  arrange(desc(`Validation AUC`))
+```
+
+## Results
+
+After evaluating how well the model performs on the validation set (2023 bracket) after fitting it to the training (2008-2022 brackets), I am interested in how well it performs in terms of the March Madness brackets, which is total points. Therefore, I will run the models on every conditional matchup for the year 2023 (as mentioned earlier) to test what the corresponding ESPN points will be from the best models. 
+
+```{r message = FALSE, warning = FALSE}
+conditional2023_best <- cbind(conditional2023[1:5], conditional2023$winnerLogReg, conditional2023$winnerRF, conditional2023$winnerXGB, conditional2023$winnerMARS)
+
+colnames(conditional2023_best) <- c("Year", "Team A", "Team B", "A_Seed", "B_Seed", "Logistic Regression Pred", "Random Forest Pred", "XGBoost Pred", "MARS Pred" )
+
+head(conditional2023_best[c(2:9)],10)
+```
+
+As you can see there were tons of various matchup possibilities within the tournament and the best models I found from their AUC's were now being used to evaluate ESPN performance. I manually calculated these results from the above table on the 2023 bracket. It's interesting to note how the models varied, specifically a model like MARS which frequently favored upsets over dominant tournament teams. 
+
+Since the XGBoost and MARS models performed well on both validation AUC and ESPN scores, these were the two types of models I decided to use for making my bracket!
+```{r message = FALSE, warning = FALSE, echo = FALSE}
+espn_results_mod <- data.frame(Model = character(), 
+                               ESPN_score = numeric())
+
+espn_results_mod <- rbind(espn_results_mod, c("Logistic Regression", 430))
+espn_results_mod <- rbind(espn_results_mod, c("Random Forest", 310))
+espn_results_mod <- rbind(espn_results_mod, c("XGBoost", 710))
+espn_results_mod <- rbind(espn_results_mod, c("MARS", 700))
+
+colnames(espn_results_mod) <- c("Model", "ESPN Score")
+```
+
+```{r message = FALSE, warning = FALSE}
+espn_results_mod %>%
+  arrange(desc(`ESPN Score`))
+```
+
+
+**2024 Predictions**
+
+Since I created two different models, I had two different brackets. My final four predictions for the 2024 tournament are as follows:
+
+XGBoost **(predicted champion: Houston)**
+
+* BYU
+
+* New Mexico
+
+* Houston
+
+* Oregon
+
+MARS **(predicted champion: Houston)**
+
+* UConn
+
+* Baylor
+
+* Houston
+
+* Purdue
+
+*Post Tourney Update:* As we can see, a lot of my picks were not correct. The MARS model scored 870 (69% correct), while the XGBoost picked too many upsets with a 360 (12.9% correct). I feel that since UConn won this year, a lot of people chose them as champion to repeat, which made for inflated points across the board. It almost wasn't safe to NOT pick them. 
+
+Some interesting results is that I did have NC State in my Elite 8 for the XGBoost model, but also 2 of my Final 4 teams lost on Day 1 (leading to why that model did so poorly). The MARS model has 3/8 Elite 8 teams correct and the XGBoost had 1/8. 
+
+Houston had a lot of injuries in the tournament which is ultimately why they lost to duke in the Sweet 16. It was unfortunate because they had a good team this year, but it also highlights a major flaw in my model, which is that it doesn't account for injuries. 
+
+
+**Testing on 2024 data**
+
+The code below re-runs the two best models on the 2024 set by combining my 2008-2022 and 2023 validation set into one, ultimately assisting in my predictions for the 2024 tournament.
+
+```{r message = FALSE, warning = FALSE}
+
+###################################################################################### Re-run on combined train/test
+################################################################################
+
+mm_data <- read_excel("march_madness.xlsx", sheet = 2)
+
+#only want 2008-2023
+train <- mm_data %>%
+  dplyr::filter(!(Year %in% 2000:2007))
+
+test <- read_excel("march_madness.xlsx", sheet = 7)
+
+train$Year <- as.factor(train$Year)
+train$TeamA <- as.factor(train$TeamA)
+train$TeamB <- as.factor(train$TeamB)
+train$A_Seed <- as.factor(train$A_Seed)
+train$B_Seed <- as.factor(train$B_Seed)
+train$Winner_A <- as.factor(train$Winner_A)
+
+train <- train %>%
+  dplyr::select(-c(Year, TeamA, TeamB, A_Seed, B_Seed, A_Score, 
+                   B_Score, MOV, Round, Diff_TotalRPI_PRE, Diff_RPI_SOS_PRE))
+
+
+################################################
+############## XGBoost (without RPI) ##### 
+#################################################
+
+############################################ creating the model
+train_x <- model.matrix(Winner_A ~ ., data = train)[, -1]
+train_y <- as.numeric(train$Winner_A)-1
+#weights <- train$wts
+
+
+######### CV to minimize number of trees --> 4 or 5
+set.seed(12345)
+xgbcv.mm <- xgb.cv(data = train_x, label = train_y, 
+                   nrounds = 50, nfold = 10) #, subsample = 0.8, eta = 0.4, max_depth = 2, colsample_bytree = 0.9)
+
+
+
+############# grid search to optimize parameters
+tune_grid <- expand.grid(
+  nrounds = 5, #c(4:6),
+  eta = c(0.05, 0.1, 0.25,0.4, 0.45),
+  max_depth = c(2:5),
+  gamma = c(0),
+  colsample_bytree = c(0.9, 1),
+  min_child_weight = 1,
+  subsample = c(0.8, 0.9, 1)
+)
+
+set.seed(12345) #
+xgb.ins.caret <- caret::train(x = train_x, y = train_y,
+                              method = "xgbTree",
+                              tuneGrid = tune_grid,
+                              trControl = trainControl(method = 'cv', # Using 10-fold cross-validation
+                                                       number = 10),
+                              objective = "binary:logistic",
+                              verbosity =0) #gets rid of warning messages
+
+plot(xgb.ins.caret)
+
+xgb.ins.caret$bestTune
+
+
+set.seed(12345)
+xgb.mm <- xgboost(data = train_x, label = train_y, 
+                  nrounds = 5, objective = "binary:logistic",
+                  max_depth = 2, eta = 0.4, subsample = 1, colsample_bytree = 0.9)
+
+
+#################################### AUROC comparison
+
+p_hat <- predict(xgb.mm, newdata = train_x, type = "prob")
+logit_roc <- rocit(p_hat, train$Winner_A)
+plot(logit_roc) #chance line = randomly flipped a coin to assign 0's and 1's
+
+plot(logit_roc)$optimal  #cutoff = optimal cutoff that maximizes Youden index 
+summary(logit_roc)
+
+
+################################### variable importance
+
+#using optimal parameters from previous tuning
+xgb.importance(feature_names = colnames(train_x), model = xgb.mm)
+
+#will automatically cluster variables statistically based on similar gain
+xgb.ggplot.importance(xgb.importance(feature_names = colnames(train_x), model = xgb.mm))
+
+
+
+###############################################
+####### making predictions on validation set 
+###############################################
+
+p_hat <- predict(xgb.mm, newdata = valid_x, type = "prob")
+logit_roc <- rocit(p_hat, valid$Winner_A)
+plot(logit_roc) #chance line = randomly flipped a coin to assign 0's and 1's
+
+plot(logit_roc)$optimal  #cutoff = optimal cutoff that maximizes Youden index 
+summary(logit_roc)
+
+XGB <- ifelse(p_hat>0.6957421 ,1,0)
+
+
+test_x <- model.matrix(~.-Year-TeamA-TeamB-A_Seed-B_Seed, data = test)[,-1]
+test$espnXGB <- predict(xgb.mm, newdata = test_x, type = 'prob')
+test$winnerXGB <- ifelse(test$espnXGB > 0.7065721,1, 0)
+
+test[c(1:5, 37:39)]
+
+
+
+
+
+################################################
+############## MARS (without RPI) #####
+#################################################
+
+
+mars2 <- earth(Winner_A ~ ., data = train, glm = list(family = binomial(link= "logit")))
+summary(mars2)
+
+evimp(mars2)
+
+
+
+p_hat <- predict(mars2, newdata = train, type = "response")
+logit_roc <- rocit(p_hat[,1], train$Winner_A)
+plot(logit_roc) #chance line = randomly flipped a coin to assign 0's and 1's
+
+plot(logit_roc)$optimal  #cutoff = optimal cutoff that maximizes Youden index 
+summary(logit_roc)
+
+###############################################
+####### making predictions on validation set 
+###############################################
+
+p_hat <- predict(mars2, newdata = valid, type = 'response')
+logit_roc <- rocit(p_hat[,1], valid$Winner_A)
+plot(logit_roc) #chance line = randomly flipped a coin to assign 0's and 1's
+
+plot(logit_roc)$optimal  #cutoff = optimal cutoff that maximizes Youden index 
+summary(logit_roc)
+
+planetMARS <- ifelse(p_hat[,1]>0.7355581 ,1,0)
+
+
+
+test$espnMARS <- predict(mars2, newdata = test, type = 'response')
+test$winnerMARS <- ifelse(test$espnMARS[,1] > 0.6996445,1, 0)
+
+test[c(1:5, 38:41)]
+
+```
+
+
+## Areas of Improvement
+
+The performance of the 2024 March Madness MARS and XGBoost models led to this recommendations section, which is where I hope to build on my work for next season and improve the predictions. 
+
+First and most importantly, I want to find a way to model injuries. One interesting article I read was looking at a team's percentage of season minutes that were lost due to injury. This is something that could easily be a continuous variable within the model. Link for reference: https://www.statswithsasa.com/2024/03/18/march-madness-injuries/
+
+Next, I would like to consider modeling margin of victory (MOV) as opposed to raw 1/0 wins and losses outputs. Perhaps modeling a continuous variable can open up the possibilities for different results. 
+
+Other variables I'd like to consider are something like a difference between two team's seeeds and non-conference performance. This was especially noticeable this year with Clemson, who despite being very underrated before the tournament, ended up going on an Elite 8 run. They performed very well in non-conference games, but it went unnoticed due to some in-conference losses.
+
+Lastly, I want to expand my test set beyond just one tournament's year of data. This can help improve my models and serve as a form of cross validation so I don't overfit to just one year. 
+
+
+## References
+
+-   **TeamRankings.com**  historical CBB team stats
+
+-   **SportsReference.com** historical CBB team stats
+
+-   **BartTorvik.com** historical CBB stats (especially efficiency metrics)
+
+-   **KenPom.com** did not use data but referenced methodology
+
+-   **https://rpubs.com/DenJackson/marchmadness** helpful resource where I modeled my project after
+
+-   **https://www.printyourbrackets.com/images/marchmadness-2023.pdf** historical bracket performance for any year
+
+
+Any web scraping code can be found in a separate R file in my Github.
+
+## Additional Code Appendix
+
+This is the code for calculating the Pythagorean Expectation for a team's expected win percentage. Pythagorean Expectation is the ratio of a team's total points raised to the n power, over the sum of their total points to the n power plus their opponent's total points to the n power. I ran a grid search on possible exponent values from 2 to 20 stepping by 0.1 to find the optimal exponent. 
+
+I calculated how far off the team's win percentage was off the expected win percentage using mean absolute error (MAE). I summed the MAE for both team A and team B and sorted by the lowest distance. This was minimized at an exponent of 8.8.
+
+```{r warning = FALSE, message = FALSE}
+mm <- read_xlsx("march_madness.xlsx")
+
+#remove 2023 to train on 2000 - 2022
+mm <- mm %>%
+  filter(!Year %in% c(2023))
+
+
+#grid searching all possible values from 2 to 20 by 0.1
+num_list <- seq(2,20,0.1)
+dict <- data.frame(Exponent = as.numeric(), MAE_A = as.numeric(), MAE_B = as.numeric(), Diff = as.numeric())
+
+for (i in num_list) {
+  
+  pythag_A <- (mm$A_TotalPoints^i)/(mm$A_TotalPoints^i + mm$A_TotalOppPoints^i)
+  pythag_B <- (mm$B_TotalPoints^i)/(mm$B_TotalPoints^i + mm$B_TotalOppPoints^i)
+  
+  
+  mae_A <- mean(abs(mm$A_WLPct_PRE - pythag_A))
+  mae_B <- mean(abs(mm$B_WLPct_PRE - pythag_B))
+  
+  dict[nrow(dict)+1,] <- c(i, mae_A, mae_B, mae_A + mae_B)
+}
+
+head(
+dict %>%
+  arrange(Diff) #8.8 is optimal
+,1)
+
+```
+
+
+Here is all of the histograms of the variables in the model
+```{r warning = FALSE, message = FALSE, echo = FALSE}
+for (i in var.names[c(1:22, 25:34)]) {
+  hist(train[[i]], xlab = i)
+}
+```
 
